@@ -1,0 +1,316 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8" />
+    <title>Analyse des Votes</title>
+    <!-- Lien vers Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Lien vers Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+    <!-- Toastr CSS -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Lien vers Bootstrap JS (optionnel, pour les composants interactifs) -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- jQuery -->
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <!-- Toastr JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Initialiser les tooltips Bootstrap
+            var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+            var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+                return new bootstrap.Tooltip(tooltipTriggerEl)
+            });
+
+            const form = document.getElementById('voteForm');
+            form.onsubmit = async function(e) {
+                e.preventDefault();
+
+                // Afficher le loader
+                document.getElementById('loader').style.display = 'inline-block';
+
+                // Récupération des champs du formulaire
+                const formData = new FormData(form);
+                const votes = {};
+                formData.forEach((value, key) => {
+                    votes[key] = value;
+                });
+
+                // Requête POST vers /submit
+                try {
+                    const resp = await fetch('/submit', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(votes)
+                    });
+
+                    // Masquer le loader
+                    document.getElementById('loader').style.display = 'none';
+
+                    if (!resp.ok) {
+                        const errorText = await resp.text();
+                        toastr.error("Erreur serveur : " + resp.status + " - " + errorText);
+                        return;
+                    }
+
+                    const results = await resp.json();
+
+                    if (results.error) {
+                        toastr.error(results.error);
+                        return;
+                    }
+
+                    if (results.length === 0) {
+                        toastr.warning("Aucun député similaire trouvé.");
+                        return;
+                    }
+
+                    toastr.success("Résultats chargés avec succès !");
+
+                    // Afficher la section des résultats
+                    document.getElementById('results').style.display = 'block';
+
+                    // Afficher les résultats dans le tableau
+                    const resultsBody = document.getElementById('resultsBody');
+                    resultsBody.innerHTML = "";
+                    results.forEach((item) => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${item.name}</td>
+                            <td>${item.similarity.toFixed(2)}</td>
+                        `;
+                        resultsBody.appendChild(row);
+                    });
+
+                    // Générer le graphique de similarité avec Chart.js
+                    const labels = results.map(item => item.name);
+                    const data = results.map(item => item.similarity);
+
+                    const ctx = document.getElementById('similarityChart').getContext('2d');
+                    if (window.similarityChartInstance) {
+                        window.similarityChartInstance.destroy();
+                    }
+                    window.similarityChartInstance = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Similarité',
+                                data: data,
+                                backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                                borderColor: 'rgba(54, 162, 235, 1)',
+                                borderWidth: 1
+                            }]
+                        },
+                        options: {
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    max: 1
+                                }
+                            },
+                            plugins: {
+                                tooltip: {
+                                    enabled: true
+                                }
+                            }
+                        }
+                    });
+                } catch (error) {
+                    // Masquer le loader en cas d'erreur
+                    document.getElementById('loader').style.display = 'none';
+                    toastr.error("Erreur lors de la soumission du formulaire.");
+                    console.error(error);
+                }
+            };
+
+            window.searchDeputes = function() {
+                const input = document.getElementById('searchInput').value.toLowerCase();
+                const resultsBody = document.getElementById('resultsBody');
+                const rows = resultsBody.getElementsByTagName('tr');
+
+                for (let row of rows) {
+                    const name = row.cells[0].textContent.toLowerCase();
+                    if (name.includes(input)) {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
+                    }
+                }
+            };
+
+            document.getElementById('downloadCSV').addEventListener('click', () => {
+                const results = Array.from(document.querySelectorAll('#resultsBody tr')).map(row => {
+                    const name = row.cells[0].textContent;
+                    const similarity = row.cells[1].textContent;
+                    return { name, similarity };
+                });
+
+                let csvContent = "data:text/csv;charset=utf-8,Député,Similarité\n";
+                results.forEach(item => {
+                    csvContent += `${item.name},${item.similarity}\n`;
+                });
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", "resultats_similarites.csv");
+                document.body.appendChild(link); // Requis pour Firefox
+                link.click();
+                document.body.removeChild(link);
+            });
+
+            document.getElementById('downloadChart').addEventListener('click', () => {
+                const canvas = document.getElementById('similarityChart');
+                const link = document.createElement('a');
+                link.href = canvas.toDataURL('image/png');
+                link.download = 'similarity_chart.png';
+                link.click();
+            });
+        });
+    </script>
+    <style>
+        .card:hover {
+            transform: scale(1.05);
+            transition: transform 0.2s;
+        }
+        /* Loader spinner centré */
+        #loader {
+            width: 1.5rem;
+            height: 1.5rem;
+            border-width: .2em;
+        }
+        /* Styles supplémentaires */
+        .badge {
+            margin-right: 5px;
+            margin-bottom: 5px;
+        }
+        .navbar-brand {
+            font-weight: bold;
+        }
+        #results {
+            margin-top: 20px;
+        }
+        .table-striped tbody tr:nth-of-type(odd) {
+            background-color: rgba(0, 0, 0, 0.05);
+        }
+    </style>
+</head>
+<body class="container my-4">
+    <!-- Barre de navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">Analyse des Votes</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+                aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+                    <li class="nav-item">
+                        <a class="nav-link active" aria-current="page" href="/">Accueil</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/about">À Propos</a>
+                    </li>
+                </ul>
+                <form class="d-flex" role="search">
+                    <input class="form-control me-2" type="search" placeholder="Rechercher un député" aria-label="Search" id="searchInput">
+                    <button class="btn btn-outline-success" type="button" onclick="searchDeputes()">Rechercher</button>
+                </form>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Section Principale : Groupes et Dendrogramme -->
+    <section class="row mb-4">
+        <div class="col-md-6">
+            <h2>Groupes de Députés</h2>
+            <table class="table table-striped table-bordered">
+                <thead class="table-dark">
+                    <tr><th>Groupe</th><th>Députés</th></tr>
+                </thead>
+                <tbody>
+                    {% for group_name, deputes_list in grouped_deputes.items() %}
+                    <tr>
+                        <td>{{ group_name }}</td>
+                        <td>
+                            {% for deputy in deputes_list %}
+                                <span class="badge bg-secondary">{{ deputy }}</span>
+                            {% endfor %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="col-md-6">
+            <h2>Dendrogramme</h2>
+            {% if grouped_deputes %}
+                <img src="{{ url_for('serve_dendrogramme', filename='dendrogramme_initial.png') }}" alt="Dendrogramme" class="img-fluid">
+            {% else %}
+                <p>Aucun dendrogramme disponible.</p>
+            {% endif %}
+        </div>
+    </section>
+
+    <!-- Section QCM -->
+    <section class="row mb-4">
+        <div class="col">
+            <h2>Répondez aux Lois (QCM)</h2>
+            <form id="voteForm">
+                {% for col in votes_df.columns[:10] %}
+                <div class="mb-3">
+                    <label class="form-label" for="{{ sanitize_law_title(col) }}">{{ col }}</label>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="{{ sanitize_law_title(col) }}" id="{{ sanitize_law_title(col) }}_pour" value="pour" required>
+                        <label class="form-check-label" for="{{ sanitize_law_title(col) }}_pour">Pour</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="{{ sanitize_law_title(col) }}" id="{{ sanitize_law_title(col) }}_contre" value="contre">
+                        <label class="form-check-label" for="{{ sanitize_law_title(col) }}_contre">Contre</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="{{ sanitize_law_title(col) }}" id="{{ sanitize_law_title(col) }}_abstention" value="abstention">
+                        <label class="form-check-label" for="{{ sanitize_law_title(col) }}_abstention">Abstention</label>
+                    </div>
+                </div>
+                {% endfor %}
+                <button type="submit" class="btn btn-primary">Soumettre</button>
+                <div id="loader" class="spinner-border text-primary ms-3" role="status" style="display:none;">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </form>
+        </div>
+    </section>
+
+    <!-- Section Résultats -->
+    <section class="row" id="results" style="display:none;">
+        <div class="col">
+            <h2>Top 3 Députés Similaires :</h2>
+            <canvas id="similarityChart" width="400" height="200"></canvas>
+            <button id="downloadChart" class="btn btn-secondary mb-3">Télécharger le Graphique</button>
+            <table id="resultsTable" class="table table-hover table-bordered">
+                <thead class="table-light">
+                    <tr>
+                        <th>Député</th>
+                        <th>Similarité</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsBody"></tbody>
+            </table>
+            <button id="downloadCSV" class="btn btn-success mb-3">Télécharger les Résultats (CSV)</button>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer mt-auto py-3 bg-light">
+        <div class="container text-center">
+            <span class="text-muted">© 2025 Votre Projet. Tous droits réservés.</span>
+        </div>
+    </footer>
+</body>
+</html>
